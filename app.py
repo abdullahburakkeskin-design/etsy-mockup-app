@@ -5,30 +5,26 @@ import os
 import replicate
 
 st.set_page_config(
-    page_title="AI Art Studio: Upscaler & Real Mockup Generator",
+    page_title="AI Art Studio: Mockup & 8K Upscaler",
     page_icon="🎨",
     layout="wide"
 )
 
-st.title("🎨 AI Art Studio: 8K Upscaler & Gerçekçi Mockup")
-st.write("Tablonuzu yükleyin; hem **300 DPI 4K/8K çözünürlüğe yükseltin** hem de **yapay zeka ile gerçekçi oda mockup'larına yerleştirin**.")
+st.title("🎨 AI Art Studio: Gerçekçi Mockup & 8K Upscaler")
+st.write("Tablonuzu yükleyin; yapay zeka ile **gerçekçi oda mockup'ları** oluşturun ve **8K / 300 DPI kalitesine yükseltin**.")
 
-# Streamlit Secrets veya Manuel Token Kontrolü
-if "REPLICATE_API_TOKEN" in st.secrets:
-    replicate_token = st.secrets["REPLICATE_API_TOKEN"]
-else:
-    replicate_token = st.sidebar.text_input("Replicate API Token", type="password")
-
-if not replicate_token:
-    st.info("💡 Devam etmek için lütfen Streamlit Secrets alanına `REPLICATE_API_TOKEN` ekleyin veya sol menüye girin.")
+# Streamlit Secrets Üzerinden Token Kontrolü
+try:
+    REPLICATE_API_TOKEN = st.secrets["REPLICATE_API_TOKEN"]
+    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
+except Exception:
+    st.error("⚠️ API Şifresi (Token) Bulunamadı! Lütfen Streamlit Settings > Secrets alanına REPLICATE_API_TOKEN değerinizi ekleyin.")
     st.stop()
 
-os.environ["REPLICATE_API_TOKEN"] = replicate_token
-
-# Tab Yapısı
+# Sekme Yapısı
 tab1, tab2 = st.tabs(["🖼️ Yapay Zeka Oda Mockup'ı", "🔍 4K / 8K Görsel Netleştirme (Upscaler)"])
 
-uploaded_file = st.file_uploader("Tablo / Sanat Eseri Görselinizi Yükleyin", type=["png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("Tablo Görselinizi Yükleyin (PNG, JPG)", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
     raw_img = Image.open(uploaded_file)
@@ -40,20 +36,23 @@ if uploaded_file:
         col1, col2 = st.columns([1, 1])
         
         with col1:
-            st.image(raw_img, caption="Orijinal Görsel", use_container_width=True)
+            st.image(raw_img, caption="Orijinal Tablonuz", use_container_width=True)
             
         with col2:
-            st.markdown("### ⚙️ Mockup Ayarları")
+            st.markdown("### ⚙️ Mockup Seçenekleri")
             style_option = st.selectbox(
                 "İç Mekan Konsepti",
                 [
-                    "Modern Minimalist Salon (Doğal Güneş Işığı)",
-                    "İskandinav Tarzı Çalışma Odası (Ahşap & Bitkiler)",
-                    "Lüks Sanat Galerisi Koridoru (Spot Işıklar)",
-                    "Boho-Chic Sıcak Yatak Odası (Toprak Tonları)"
+                    "Modern Minimalist Salon (Gün Işığı)",
+                    "İskandinav Çalışma Odası (Ahşap & Bitkiler)",
+                    "Lüks Sanat Galerisi (Spot Işıklar)",
+                    "Boho-Chic Yatak Odası (Toprak Tonları)"
                 ]
             )
-            frame_style = st.selectbox("Çerçeve Stili", ["Siyah Ahşap Çerçeve", "Doğal Meşe Çerçeve", "Beyaz Çerçeve", "Çerçevesiz İnce Kanvas"])
+            frame_style = st.selectbox(
+                "Çerçeve Stili", 
+                ["Siyah Ahşap Çerçeve", "Doğal Meşe Çerçeve", "Beyaz Çerçeve", "Çerçevesiz İnce Kanvas"]
+            )
             
             run_mockup = st.button("✨ Yapay Zeka İle Odada Oluştur", type="primary", use_container_width=True)
 
@@ -61,16 +60,15 @@ if uploaded_file:
             st.markdown("---")
             st.info("⏳ Yapay Zeka tablonuzun dokusunu koruyarak odayı tasarlıyor...")
             
-            # Görseli Byte Çevirme
             img_bytes = io.BytesIO()
             raw_img.save(img_bytes, format="PNG")
             img_bytes.seek(0)
             
             prompts = {
-                "Modern Minimalist Salon (Doğal Güneş Işığı)": "A high-end modern minimalist living room wall, soft natural sunlight, luxury interior design, stylish furniture, realistic photography",
-                "İskandinav Tarzı Çalışma Odası (Ahşap & Bitkiler)": "A cozy Scandinavian style room wall with wooden desk, indoor plant, warm aesthetic ambient lighting, realistic photo",
-                "Lüks Sanat Galerisi Koridoru (Spot Işıklar)": "A modern art gallery interior corridor wall, spotlighting, sleek hardwood floors, premium atmosphere, realistic photo",
-                "Boho-Chic Sıcak Yatak Odası (Toprak Tonları)": "A stylish Boho-chic bedroom interior, textured beige wall, pampas grass decor, warm natural shadows, realistic photo"
+                "Modern Minimalist Salon (Gün Işığı)": "A high-end modern minimalist living room wall, soft natural sunlight, luxury interior design, stylish furniture, realistic photo",
+                "İskandinav Çalışma Odası (Ahşap & Bitkiler)": "A cozy Scandinavian style room wall with wooden desk, indoor plant, warm aesthetic ambient lighting, realistic photo",
+                "Lüks Sanat Galerisi (Spot Işıklar)": "A modern art gallery interior corridor wall, spotlighting, sleek hardwood floors, premium atmosphere, realistic photo",
+                "Boho-Chic Yatak Odası (Toprak Tonları)": "A stylish Boho-chic bedroom interior, textured beige wall, pampas grass decor, warm natural shadows, realistic photo"
             }
             
             full_prompt = (
@@ -88,8 +86,8 @@ if uploaded_file:
                         "num_outputs": 1
                     }
                 )
-                if output:
-                    st.success("✅ Mockup Üretildi!")
+                if output and len(output) > 0:
+                    st.success("✅ Mockup Başarıyla Üretildi!")
                     st.image(output[0], caption="Yapay Zeka Mockup Çıktısı", use_container_width=True)
             except Exception as e:
                 st.error(f"Mockup oluşturulurken bir hata meydana geldi: {str(e)}")
@@ -99,10 +97,9 @@ if uploaded_file:
     # ---------------------------------------------------------
     with tab2:
         st.markdown("### 🔍 Görsel Çözünürlüğünü Yükseltme (Super Resolution)")
-        st.write("Görselinizin piksellerini yapay zeka ile doldurarak netleştirin ve baskıya hazır hale getirin.")
+        st.write("Görselinizin piksellerini yapay zeka ile doldurarak netleştirin ve baskıya hazır (300 DPI) hale getirin.")
         
-        scale_factor = st.radio("Hedef Çözünürlük", ["2x (Full HD / 2K)", "4x (4K Ultra HD)", "8x (8K Baskı Kalitesi - 300 DPI)"])
-        
+        scale_factor = st.radio("Hedef Çözünürlük Büyüklüğü", ["2x (Full HD / 2K)", "4x (4K Ultra HD)", "8x (8K Baskı Kalitesi - 300 DPI)"])
         scale_map = {"2x (Full HD / 2K)": 2, "4x (4K Ultra HD)": 4, "8x (8K Baskı Kalitesi - 300 DPI)": 8}
         
         run_upscale = st.button("🚀 Görseli Netleştir ve Büyüt", type="primary")
@@ -115,7 +112,6 @@ if uploaded_file:
             img_bytes.seek(0)
             
             try:
-                # Real-ESRGAN Yapay Zeka Upscaler Modeli
                 output_url = replicate.run(
                     "nightmareai/real-esrgan:42203314ed1d2ee0b5511116347e4122cd0ed303e6de732238d6732a603b857f",
                     input={
