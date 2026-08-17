@@ -3,24 +3,26 @@ from PIL import Image, ImageOps, ImageFilter
 import io
 import requests
 import time
+import numpy as np
+import cv2
 
 # ---------------------------------------------------------
 # SAYFA AYARLARI VE GÖRSEL TEMA (PREMIUM DARK)
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="AI Art Studio PRO - Premium Mockups",
+    page_title="AI Art Studio PRO - Perspective Mockups",
     page_icon="🎨",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
 # ---------------------------------------------------------
-# HUGGING FACE INFERENCE API (GÜVENLİ SECRETS BAĞLANTISI)
+# HUGGING FACE INFERENCE API
 # ---------------------------------------------------------
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
 
 # ---------------------------------------------------------
-# MODERN, HAREKETLİ CSS ENJEKSİYONU (THEME & ANIMATIONS)
+# CSS STİLLERİ
 # ---------------------------------------------------------
 st.markdown("""
 <style>
@@ -32,54 +34,34 @@ st.markdown("""
         font-family: 'Poppins', sans-serif;
     }
 
-    @keyframes fadeInDown {
-        0% { opacity: 0; transform: translateY(-20px); }
-        100% { opacity: 1; transform: translateY(0); }
-    }
-
     .main-title {
-        font-size: 3.5rem;
+        font-size: 3.2rem;
         font-weight: 700;
         background: linear-gradient(90deg, #FF4B4B, #FF9999);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         text-align: center;
         margin-bottom: 0.5rem;
-        animation: fadeInDown 1s ease-out;
     }
 
     .sub-title {
-        font-size: 1.2rem;
+        font-size: 1.1rem;
         color: #A0A0A0;
         text-align: center;
-        margin-bottom: 3rem;
-        font-weight: 300;
-        animation: fadeInDown 1.2s ease-out;
+        margin-bottom: 2.5rem;
     }
 
-    [data-testid="stFileUploader"], [data-testid="stSelectbox"], .stButton button {
+    [data-testid="stFileUploader"], [data-testid="stSelectbox"], [data-testid="stSlider"], .stButton button {
         background-color: #1A1D24 !important;
         border: 1px solid #262730 !important;
         border-radius: 12px !important;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        transition: all 0.3s ease;
-    }
-
-    [data-testid="stFileUploader"]:hover {
-        border-color: #FF4B4B !important;
-        transform: translateY(-2px);
-    }
-
-    @keyframes imageReveal {
-        0% { opacity: 0; scale: 0.95; }
-        100% { opacity: 1; scale: 1; }
     }
 
     [data-testid="stImage"] img {
         border-radius: 16px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.5);
         border: 2px solid #262730;
-        animation: imageReveal 0.8s ease-out;
     }
 
     .stButton button {
@@ -89,20 +71,10 @@ st.markdown("""
         padding: 0.75rem 2rem !important;
         border: none !important;
         width: 100%;
-        transition: all 0.3s ease !important;
         text-transform: uppercase;
         letter-spacing: 1px;
     }
 
-    .stButton button:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 20px rgba(237, 28, 36, 0.4) !important;
-    }
-
-    .stSpinner > div > div {
-        border-top-color: #FF4B4B !important;
-    }
-    
     hr {
         border-color: #262730 !important;
         margin: 2rem 0;
@@ -114,17 +86,15 @@ st.markdown("""
 # BAŞLIK
 # ---------------------------------------------------------
 st.markdown('<h1 class="main-title">AI Art Studio PRO</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">Sanatınızı Premium Mekanlarda Canlandırın</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Sanatınızı Perspektif ve Konum Ayarlarıyla Gerçekçi Mekanlara Oturtun</p>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
 def generate_ai_room_hf(prompt, retries=3, delay=3):
     """
-    Güncellenmiş aktif SDXL modeli üzerinden mekan görseli üretir.
-    Hugging Face isteği başarısız olursa otomatik Pollinations yedek servisine geçer.
+    Oda görseli üretir.
     """
-    # 1. Öncelik: Hugging Face SDXL Base Model
     API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
     headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
     payload = {"inputs": prompt}
@@ -140,7 +110,7 @@ def generate_ai_room_hf(prompt, retries=3, delay=3):
         except Exception:
             pass
             
-    # 2. Öncelik (Yedek Servis): Anında Görsel Üreten Ücretsiz API
+    # Yedek Servis
     try:
         encoded_prompt = requests.utils.quote(prompt)
         backup_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=768&nologo=true"
@@ -154,7 +124,7 @@ def generate_ai_room_hf(prompt, retries=3, delay=3):
 
 def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
     """
-    Eserin etrafına çerçeve, paspartu ve derinlik gölgesi ekler.
+    Çerçeve ve Paspartu Ekler.
     """
     w, h = art_img.size
     border_px = int(max(w, h) * frame_thickness_ratio)
@@ -169,24 +139,62 @@ def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
     
     art_with_pass = ImageOps.expand(art_img, border=passepartout_size, fill=(250, 250, 248))
     framed = ImageOps.expand(art_with_pass, border=border_px, fill=bg_color)
+    return framed
+
+def apply_perspective_and_paste(background, artwork, pos_x, pos_y, scale_percent, pers_left, pers_right):
+    """
+    OpenCV kullanarak eseri perspektif bükmesiyle duvara yerleştirir.
+    """
+    bg_w, bg_h = background.size
     
-    shadow_pad = int(max(framed.size) * 0.08)
-    canvas = Image.new("RGBA", (framed.width + shadow_pad * 2, framed.height + shadow_pad * 2), (0, 0, 0, 0))
-    shadow = Image.new("RGBA", framed.size, (0, 0, 0, 110))
-    shadow_blur = ImageFilter.GaussianBlur(radius=int(shadow_pad * 0.45))
+    # Eser boyutunu ölçekle
+    orig_w, orig_h = artwork.size
+    new_w = int(orig_w * (scale_percent / 100.0))
+    new_h = int(orig_h * (scale_percent / 100.0))
+    art_resized = artwork.resize((new_w, new_h), Image.Resampling.LANCZOS)
     
-    canvas.paste(shadow, (shadow_pad + int(shadow_pad * 0.2), shadow_pad + int(shadow_pad * 0.3)))
-    canvas = canvas.filter(shadow_blur)
-    canvas.paste(framed, (shadow_pad, shadow_pad))
-    return canvas
+    # PIL Image -> NumPy Array (OpenCV formatı)
+    art_np = np.array(art_resized)
+    
+    # Orijinal 4 Köşe (Sol-Üst, Sağ-Üst, Sağ-Alt, Sol-Alt)
+    src_pts = np.float32([
+        [0, 0],
+        [new_w, 0],
+        [new_w, new_h],
+        [0, new_h]
+    ])
+    
+    # Perspektif Bükme Değerleri (Perspektif açısına göre dikey kaydırma)
+    offset_l = int(new_h * (pers_left / 100.0))
+    offset_r = int(new_h * (pers_right / 100.0))
+    
+    # Yeni Hedef 4 Köşesi
+    dst_pts = np.float32([
+        [0, max(0, offset_l)],
+        [new_w, max(0, offset_r)],
+        [new_w, new_h - max(0, -offset_r)],
+        [0, new_h - max(0, -offset_l)]
+    ])
+    
+    # Homografi Matrisi Hesaplama ve Bükme
+    matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
+    warped = cv2.warpPerspective(art_np, matrix, (new_w, new_h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0,0))
+    
+    # Bükülen Eseri PIL Image'e Geri Çevir
+    warped_img = Image.fromarray(warped, mode="RGBA")
+    
+    # Arka Plan Üzerine Yapıştırma
+    final_bg = background.copy()
+    final_bg.paste(warped_img, (pos_x, pos_y), warped_img)
+    return final_bg
 
 # ---------------------------------------------------------
-# ARAYÜZ AKIŞI
+# ARAYÜZ VE UYGULAMA AKIŞI
 # ---------------------------------------------------------
 if "generated_room" not in st.session_state:
     st.session_state.generated_room = None
 
-col_file, col_params = st.columns([1.2, 1])
+col_file, col_params = st.columns([1, 1.1])
 
 with col_file:
     st.markdown("### 1. Eserinizi Yükleyin")
@@ -199,7 +207,7 @@ if uploaded_file:
         st.image(raw_img, caption="Yüklenen Eser", use_container_width=True)
         
     with col_params:
-        st.markdown("### 2. Stüdyo Ayarları")
+        st.markdown("### 2. Stüdyo & Mekan Ayarları")
         
         style_preset = st.selectbox(
             "Mekan Konsepti",
@@ -216,8 +224,7 @@ if uploaded_file:
             ["Siyah Ahşap", "Doğal Meşe", "Beyaz Minimal", "Koyu Ceviz"]
         )
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        generate_btn = st.button("🚀 Mockup Oluştur")
+        generate_btn = st.button("🚀 Oda Görseli Üret / Yenile")
 
     prompts_map = {
         "Modern İskandinav Salonu (Aydınlık)": "A bright modern Scandinavian living room interior, neutral wall, oak furniture, green plants, natural sunlight, architectural digest photo, 8k",
@@ -226,32 +233,53 @@ if uploaded_file:
         "Endüstriyel Loft (Concrete wall)": "An industrial loft living room with concrete wall, leather sofa, soft ambient lighting, modern architecture, 8k photo"
     }
 
-    if generate_btn:
-        with st.spinner("🤖 Yapay zeka modeli mekanı çiziyor..."):
-            room_bg = generate_ai_room_hf(prompts_map.get(style_preset))
-            if room_bg is not None:
-                st.session_state.generated_room = room_bg
+    if generate_btn or st.session_state.generated_room is None:
+        if generate_btn:
+            with st.spinner("🤖 Yapay zeka oda mekanı çiziyor..."):
+                room_bg = generate_ai_room_hf(prompts_map.get(style_preset))
+                if room_bg is not None:
+                    st.session_state.generated_room = room_bg
 
+    # ---------------------------------------------------------
+    # 3. DUVAR PERSPERTİF VE KONUM AYARLARI (SLIDERS)
+    # ---------------------------------------------------------
     if st.session_state.generated_room is not None:
-        ai_room_bg = st.session_state.generated_room.copy()
+        st.markdown("<hr>", unsafe_allow_html=True)
+        st.markdown("### 3. Duvar Perspektif ve Konum Ayarları")
         
-        framed_canvas = prepare_framed_artwork(raw_img, frame_choice)
+        col_s1, col_s2, col_s3 = st.columns(3)
         
-        w_bg, h_bg = ai_room_bg.size
-        target_h = int(h_bg * 0.45)
-        aspect = framed_canvas.width / framed_canvas.height
-        target_w = int(target_h * aspect)
+        bg_w, bg_h = st.session_state.generated_room.size
         
-        scaled_art = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        with col_s1:
+            pos_x = st.slider("Yatay Konum (X)", 0, bg_w - 100, int(bg_w * 0.35))
+            pos_y = st.slider("Dikey Konum (Y)", 0, bg_h - 100, int(bg_h * 0.20))
+            
+        with col_s2:
+            scale_percent = st.slider("Eser Boyutu (%)", 10, 80, 35)
+            
+        with col_s3:
+            pers_left = st.slider("Sol Açı / Eğim", -30, 30, 0, help="Eserin sol tarafını yukarı/aşağı büker")
+            pers_right = st.slider("Sağ Açı / Eğim", -30, 30, 0, help="Eserin sağ tarafını yukarı/aşağı büker")
+
+        # Çerçeveli eseri hazırla
+        framed_artwork = prepare_framed_artwork(raw_img, frame_choice)
         
-        pos_x = (w_bg - target_w) // 2
-        pos_y = (h_bg - target_h) // 2 - int(h_bg * 0.05)
+        # Perspektif ve Konumlandırma uygula
+        final_mockup = apply_perspective_and_paste(
+            st.session_state.generated_room, 
+            framed_artwork, 
+            pos_x, 
+            pos_y, 
+            scale_percent, 
+            pers_left, 
+            pers_right
+        )
         
-        ai_room_bg.paste(scaled_art, (pos_x, pos_y), scaled_art)
-        final_rgb = ai_room_bg.convert("RGB")
+        final_rgb = final_mockup.convert("RGB")
         
         st.markdown("<hr>", unsafe_allow_html=True)
-        st.markdown("<h2 style='text-align:center; color:#FAFAFA;'>✨ Premium Mockup Sonucu</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align:center; color:#FAFAFA;'>✨ Canlı Mockup Önizleme</h2>", unsafe_allow_html=True)
         
         col_res1, col_res2, col_res3 = st.columns([1, 6, 1])
         with col_res2:
@@ -262,7 +290,7 @@ if uploaded_file:
             st.download_button(
                 label="📥 Mockup'ı Yüksek Kalitede İndir",
                 data=buf.getvalue(),
-                file_name="ai_studio_pro_mockup.jpg",
+                file_name="ai_studio_perspective_mockup.jpg",
                 mime="image/jpeg",
                 use_container_width=True
             )
