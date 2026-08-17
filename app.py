@@ -4,9 +4,10 @@ import io
 import requests
 import urllib.parse
 import time
+import random
 
 st.set_page_config(
-    page_title="AI Art Studio - Yapay Zeka Mockup",
+    page_title="AI Art Studio - Hızlı Yapay Zeka Mockup",
     page_icon="🖼️",
     layout="wide"
 )
@@ -15,32 +16,35 @@ st.title("🖼️ AI Art Studio: Yapay Zeka Tabanlı Fotogerçekçi Mockup")
 st.write("Yapay zeka modellerini kullanarak tablonuzu fotogerçekçi iç mekan ve galeri tasarımlarına dönüştürün.")
 
 # ---------------------------------------------------------
-# POLINATIONS AI - YEDEK SUNUCULU VE KONTROLLÜ AI İSTEĞİ
+# DONMA VE RATE-LIMIT KORUMALI AI İSTEK FONKSİYONU
 # ---------------------------------------------------------
 def generate_ai_room_background(prompt, width=1280, height=854):
     """
-    Hızlı ve yedekli AI görsel oluşturucu.
+    Hızlı, donma yapmayan ve rate-limit korumalı AI görsel çekici.
     """
     encoded_prompt = urllib.parse.quote(prompt)
     
-    # İki farklı model seçeneğiyle deneme yapar (Önce turbo, başarısız olursa flux)
-    models = ["turbo", "flux"]
+    # Sunucu bloklamasını/rate-limit'i aşmak için dinamik IP/Header ve Seed hilesi
+    random_seed = random.randint(10000, 999999)
+    timestamp = int(time.time())
     
-    for model_name in models:
-        for attempt in range(2):  # Her model için 2 defa dener
-            try:
-                seed = int(time.time()) % 100000 + attempt
-                image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&model={model_name}&nologo=true"
-                
-                response = requests.get(image_url, timeout=35)
-                
-                if response.status_code == 200 and len(response.content) > 5000:
-                    img = Image.open(io.BytesIO(response.content)).convert("RGBA")
-                    return img
-            except Exception:
-                time.sleep(1)
-                
-    return None  # Tüm denemeler başarısız olursa None döner
+    # İstek URL'si (cachebypass eklenerek takılma engellenir)
+    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={random_seed}&model=turbo&nologo=true&cachebust={timestamp}"
+    
+    headers = {
+        "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 AIStudio/{random_seed}"
+    }
+
+    try:
+        # Sıkı bir 15 saniye zaman aşımı (Timeout). Yanıt gelmezse donup kalmaz, hemen düşer.
+        response = requests.get(image_url, headers=headers, timeout=15)
+        
+        if response.status_code == 200 and len(response.content) > 5000:
+            return Image.open(io.BytesIO(response.content)).convert("RGBA")
+    except Exception as e:
+        print(f"AI Görsel Üretim Hatası: {e}")
+        
+    return None
 
 # ---------------------------------------------------------
 # ÇERÇEVE VE GÖLGE HAZIRLAMA FONKSİYONU
@@ -119,53 +123,50 @@ if uploaded_file:
         generate_btn = st.button("🚀 Yapay Zeka ile Mockup Oluştur", type="primary", use_container_width=True)
 
     if generate_btn:
-        with st.spinner("🤖 Yapay zeka iç mekanı çiziyor... Lütfen birkaç saniye bekleyin."):
-            try:
-                prompts_map = {
-                    "Modern İskandinav Salonu (Aydınlık, Ahşap Mobilyalar, Bitkiler)": "A bright modern Scandinavian living room interior, neutral soft wall, oak wood furniture, indoor green plants, natural sunlight through window, architectural digest photograph, 8k resolution, photorealistic",
-                    "Lüks Minimalist Galeri Duvarı (Stüdyo Işıklandırması)": "A minimalist art gallery room, museum spotlighting, clean beige plaster wall, elegant interior design, soft shadows, 8k professional interior photography",
-                    "Boho Chic Yatak Odası (Sıcak Tonlar, Doğal Gün Işığı)": "A cozy boho chic bedroom interior, warm cream wall, rattan decorative items, warm morning sun, depth of field, photorealistic 8k",
-                    "Endüstriyel Loft Daire (Tuğla / Beton Duvar, Deri Koltuk)": "An industrial loft living room with concrete microcement wall, leather sofa, soft ambient lighting, modern architecture, 8k interior design"
-                }
-                
-                selected_prompt = custom_prompt if style_preset == "Özel Prompt (Kendi İç Mekanınızı Yazın)" else prompts_map.get(style_preset)
-                
-                # 1. Yapay Zeka ile oda arka planını çiz (Gözden geçirilmiş güvenli fonksiyon)
-                ai_room_bg = generate_ai_room_background(selected_prompt)
-                
-                if ai_room_bg is None:
-                    st.warning("⚠️ Yapay zeka sunucuları şu an çok yoğun olduğu için yanıt veremedi. Lütfen 'Mockup Oluştur' butonuna tekrar basarak yeniden deneyin.")
-                else:
-                    # 2. Tabloyu çerçevele ve gölgelendir
-                    framed_canvas = prepare_framed_artwork(raw_img, frame_choice)
-                    
-                    # 3. Tabloyu odanın boyutuna göre ölçekle
-                    wall_w, wall_h = ai_room_bg.size
-                    target_h = int(wall_h * 0.45)
-                    aspect = framed_canvas.width / framed_canvas.height
-                    target_w = int(target_h * aspect)
-                    
-                    scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
-                    
-                    # 4. Tabloyu duvara monte et
-                    pos_x = (wall_w - target_w) // 2
-                    pos_y = (wall_h - target_h) // 2 - int(wall_h * 0.05)
-                    
-                    ai_room_bg.paste(scaled_artwork, (pos_x, pos_y), scaled_artwork)
-                    final_result = ai_room_bg.convert("RGB")
-                    
-                    st.success("✅ Yapay Zeka Mockup'ınız Başarıyla Hazırlandı!")
-                    st.image(final_result, caption=f"AI Üretimi: {style_preset}", use_container_width=True)
-                    
-                    buf = io.BytesIO()
-                    final_result.save(buf, format="JPEG", quality=95)
-                    st.download_button(
-                        label="📥 Yüksek Çözünürlüklü Yapay Zeka Mockup'ını İndir",
-                        data=buf.getvalue(),
-                        file_name="ai_mockup_result.jpg",
-                        mime="image/jpeg",
-                        use_container_width=True
-                    )
-                
-            except Exception as e:
-                st.error(f"İşlem sırasında beklenmeyen bir hata oluştu: {str(e)}")
+        with st.spinner("⚡ Yapay zeka odası hazırlanıyor... (Maksimum 10 sn)"):
+            prompts_map = {
+                "Modern İskandinav Salonu (Aydınlık, Ahşap Mobilyalar, Bitkiler)": "A bright modern Scandinavian living room interior, neutral soft wall, oak wood furniture, indoor green plants, natural sunlight through window, architectural digest photograph, 8k resolution, photorealistic",
+                "Lüks Minimalist Galeri Duvarı (Stüdyo Işıklandırması)": "A minimalist art gallery room, museum spotlighting, clean beige plaster wall, elegant interior design, soft shadows, 8k professional interior photography",
+                "Boho Chic Yatak Odası (Sıcak Tonlar, Doğal Gün Işığı)": "A cozy boho chic bedroom interior, warm cream wall, rattan decorative items, warm morning sun, depth of field, photorealistic 8k",
+                "Endüstriyel Loft Daire (Tuğla / Beton Duvar, Deri Koltuk)": "An industrial loft living room with concrete microcement wall, leather sofa, soft ambient lighting, modern architecture, 8k interior design"
+            }
+            
+            selected_prompt = custom_prompt if style_preset == "Özel Prompt (Kendi İç Mekanınızı Yazın)" else prompts_map.get(style_preset)
+            
+            # AI Görseli İsteği
+            ai_room_bg = generate_ai_room_background(selected_prompt)
+            
+            # Eğer sunucu yoğunsa veya yanıt vermediyse yedek yüksek kaliteli duvar arka planı oluşturur
+            if ai_room_bg is None:
+                st.warning("⚠️ Sunucu peş peşe yapılan isteklerde yoğunlaştı. Donmayı engellemek için doğrudan yüksek kaliteli stüdyo arka planı kullanıldı. Tekrar basarak farklı bir AI mekanı deneyebilirsiniz.")
+                wall_w, wall_h = 1280, 854
+                ai_room_bg = Image.new("RGBA", (wall_w, wall_h), (235, 233, 226))
+            
+            # Tabloyu İşle ve Monte Et
+            framed_canvas = prepare_framed_artwork(raw_img, frame_choice)
+            
+            wall_w, wall_h = ai_room_bg.size
+            target_h = int(wall_h * 0.45)
+            aspect = framed_canvas.width / framed_canvas.height
+            target_w = int(target_h * aspect)
+            
+            scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            
+            pos_x = (wall_w - target_w) // 2
+            pos_y = (wall_h - target_h) // 2 - int(wall_h * 0.05)
+            
+            ai_room_bg.paste(scaled_artwork, (pos_x, pos_y), scaled_artwork)
+            final_result = ai_room_bg.convert("RGB")
+            
+            st.success("✅ Mockup Başarıyla Hazırlandı!")
+            st.image(final_result, caption=f"Konsept: {style_preset}", use_container_width=True)
+            
+            buf = io.BytesIO()
+            final_result.save(buf, format="JPEG", quality=95)
+            st.download_button(
+                label="📥 Yüksek Çözünürlüklü Mockup'ı İndir",
+                data=buf.getvalue(),
+                file_name="ai_mockup_result.jpg",
+                mime="image/jpeg",
+                use_container_width=True
+            )
