@@ -3,3 +3,5 @@ pillow
 requests
 opencv-python-headless
 numpy
+ultralytics
+torch
