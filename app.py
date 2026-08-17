@@ -12,15 +12,14 @@ st.set_page_config(
 # ---------------------------------------------------------
 # HUGGING FACE INFERENCE API (GÜVENLİ SECRETS BAĞLANTISI)
 # ---------------------------------------------------------
-# Token koda yazılmaz, Streamlit Secrets alanından çekilir
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
 
 def generate_ai_room_hf(prompt):
     """
-    Hugging Face API üzerinden FLUX modelini kullanarak fotogerçekçi oda çizer.
+    Hugging Face API üzerinden FLUX.1-schnell modelini kullanarak fotogerçekçi oda çizer.
     """
     if not HF_TOKEN:
-        st.error("🔑 Hugging Face Token bulunamadı. Lütfen Streamlit ayarlarındaki Secrets alanına HF_TOKEN değişkenini tanımlayın.")
+        st.error("🔑 Hugging Face Token bulunamadı. Lütfen Streamlit Secrets alanına HF_TOKEN değişkenini tanımlayın.")
         return None
 
     API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
@@ -32,21 +31,24 @@ def generate_ai_room_hf(prompt):
     }
     
     try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=35)
         if response.status_code == 200:
             return Image.open(io.BytesIO(response.content)).convert("RGBA")
         elif response.status_code == 503:
-            st.info("ℹ️ Yapay zeka modeli başlatılıyor, lütfen 5 saniye sonra tekrar deneyin.")
+            st.warning("⏳ Yapay zeka modeli sunucuda başlatılıyor. Lütfen 5-10 saniye bekleyip tekrar deneyin.")
             return None
         else:
-            st.error(f"API Hatası (Kod: {response.status_code}): {response.text}")
+            st.error(f"API Hatası ({response.status_code}): {response.text}")
             return None
+    except requests.exceptions.Timeout:
+        st.error("⏱️ İstek zaman aşımına uğradı. Lütfen tekrar deneyin.")
+        return None
     except Exception as e:
         st.error(f"Bağlantı Hatası: {str(e)}")
         return None
 
 # ---------------------------------------------------------
-# ÇERÇEVE VE DERİNLİK GÖLGESİ
+# ÇERÇEVE VE DERİNLİK GÖLGESİ HAZIRLAMA
 # ---------------------------------------------------------
 def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
     w, h = art_img.size
@@ -61,10 +63,14 @@ def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
     
     bg_color = frame_colors.get(frame_type, (22, 22, 22))
     
+    # Paspartu (İç Galeri Kenarlığı)
     passepartout_size = int(border_px * 0.8)
     art_with_pass = ImageOps.expand(art_img, border=passepartout_size, fill=(250, 250, 248))
+    
+    # Dış Çerçeve
     framed = ImageOps.expand(art_with_pass, border=border_px, fill=bg_color)
     
+    # Gerçekçi Yumuşak Gölge
     shadow_pad = int(max(framed.size) * 0.08)
     canvas_w = framed.width + shadow_pad * 2
     canvas_h = framed.height + shadow_pad * 2
@@ -73,17 +79,17 @@ def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
     shadow = Image.new("RGBA", framed.size, (0, 0, 0, 110))
     shadow_blur = ImageFilter.GaussianBlur(radius=int(shadow_pad * 0.45))
     
-    canvas.paste(shadow, (shadow_pad + int(shadow_pad*0.2), shadow_pad + int(shadow_pad*0.3)))
+    canvas.paste(shadow, (shadow_pad + int(shadow_pad * 0.2), shadow_pad + int(shadow_pad * 0.3)))
     canvas = canvas.filter(shadow_blur)
     canvas.paste(framed, (shadow_pad, shadow_pad))
     
     return canvas
 
 # ---------------------------------------------------------
-# ARAYÜZ
+# ARAYÜZ METİNLERİ VE DÜZEN
 # ---------------------------------------------------------
 st.title("🖼️ AI Art Studio: Yapay Zeka Tabanlı Fotogerçekçi Mockup")
-st.write("FLUX.1 Yapay zeka modelini kullanarak tablonuzu fotogerçekçi iç mekan ve galeri tasarımlarına dönüştürün.")
+st.caption("Eserlerinizi FLUX.1 yapay zeka mimarisiyle fotogerçekçi iç mekan ve galeri tasarımlarına dönüştürün.")
 
 uploaded_file = st.file_uploader("Tablo Görselinizi Yükleyin (PNG, JPG)", type=["png", "jpg", "jpeg"])
 
@@ -93,10 +99,10 @@ if uploaded_file:
     col_l, col_r = st.columns([1, 1])
     
     with col_l:
-        st.image(raw_img, caption="Orijinal Tablonuz", use_container_width=True)
+        st.image(raw_img, caption="Yüklenen Eser", use_container_width=True)
         
     with col_r:
-        st.markdown("### 🎨 Yapay Zeka İç Mekan Tasarımı")
+        st.markdown("### 🎨 Mekan ve Çerçeve Parametreleri")
         
         style_preset = st.selectbox(
             "Yapay Zeka Oda Konsepti",
@@ -125,10 +131,10 @@ if uploaded_file:
             }
             
             selected_prompt = prompts_map.get(style_preset)
-            
             ai_room_bg = generate_ai_room_hf(selected_prompt)
             
             if ai_room_bg is not None:
+                # Eseri ve çerçeveyi işle
                 framed_canvas = prepare_framed_artwork(raw_img, frame_choice)
                 
                 wall_w, wall_h = ai_room_bg.size
@@ -138,21 +144,22 @@ if uploaded_file:
                 
                 scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
                 
+                # Duvara hassas ortalama
                 pos_x = (wall_w - target_w) // 2
                 pos_y = (wall_h - target_h) // 2 - int(wall_h * 0.05)
                 
                 ai_room_bg.paste(scaled_artwork, (pos_x, pos_y), scaled_artwork)
                 final_result = ai_room_bg.convert("RGB")
                 
-                st.success("✅ FLUX Yapay Zeka Mockup'ınız Başarıyla Hazırlandı!")
-                st.image(final_result, caption=f"AI Üretimi: {style_preset}", use_container_width=True)
+                st.success("✅ Mockup Başarıyla Hazırlandı!")
+                st.image(final_result, caption=f"Konsept: {style_preset}", use_container_width=True)
                 
                 buf = io.BytesIO()
                 final_result.save(buf, format="JPEG", quality=95)
                 st.download_button(
                     label="📥 Yüksek Çözünürlüklü Mockup'ı İndir",
                     data=buf.getvalue(),
-                    file_name="ai_mockup_result.jpg",
+                    file_name="ai_art_studio_mockup.jpg",
                     mime="image/jpeg",
                     use_container_width=True
                 )
