@@ -132,7 +132,11 @@ st.markdown('<p class="sub-title">FLUX.1 Mimarisiyle Sanatınızı Premium Mekan
 # ---------------------------------------------------------
 # YARDIMCI FONKSİYONLAR (API VE GÖRSEL İŞLEME)
 # ---------------------------------------------------------
-def generate_ai_room_hf(prompt, retries=2, delay=5):
+def generate_ai_room_hf(prompt, retries=3, delay=3):
+    """
+    Hugging Face API üzerinden FLUX.1-schnell modelini çağırır.
+    Ağ kopmalarına ve DNS hatalarına karşı otomatik 3 defa yeniden dener.
+    """
     if not HF_TOKEN:
         st.error("🔑 Hugging Face Token bulunamadı. Lütfen Streamlit Secrets alanına HF_TOKEN tanımlayın.")
         return None
@@ -141,24 +145,33 @@ def generate_ai_room_hf(prompt, retries=2, delay=5):
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     payload = {"inputs": prompt, "parameters": {"width": 1024, "height": 768}}
     
-    try:
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=40)
-        if response.status_code == 200:
-            return Image.open(io.BytesIO(response.content)).convert("RGBA")
-        elif response.status_code == 503:
-            if retries > 0:
+    for attempt in range(retries):
+        try:
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=35)
+            if response.status_code == 200:
+                return Image.open(io.BytesIO(response.content)).convert("RGBA")
+            elif response.status_code == 503:
+                # Model sunucuda soğuk başlangıç yapıyorsa bekle
                 time.sleep(delay)
-                return generate_ai_room_hf(prompt, retries-1, delay)
-            st.warning("⏳ Model yükleniyor, lütfen birkaç saniye bekleyip tekrar deneyin.")
+                continue
+            else:
+                st.error(f"API Hatası ({response.status_code}): {response.text}")
+                return None
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            if attempt < retries - 1:
+                time.sleep(delay)
+                continue
+            st.error("📡 Sunucuya bağlanırken DNS / Ağ hatası oluştu. Lütfen internet bağlantınızı veya VPN/DNS ayarlarınızı kontrol edip tekrar deneyin.")
             return None
-        else:
-            st.error(f"API Hatası ({response.status_code}): {response.text}")
+        except Exception as e:
+            st.error(f"Beklenmeyen Hata: {str(e)}")
             return None
-    except Exception as e:
-        st.error(f"Bağlantı Hatası: {str(e)}")
-        return None
+    return None
 
 def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
+    """
+    Eserin etrafına seçilen renkte çerçeve, paspartu ve yumuşak derinlik gölgesi ekler.
+    """
     w, h = art_img.size
     border_px = int(max(w, h) * frame_thickness_ratio)
     frame_colors = {
@@ -170,9 +183,12 @@ def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
     bg_color = frame_colors.get(frame_type, (22, 22, 22))
     passepartout_size = int(border_px * 0.8)
     
+    # Paspartu
     art_with_pass = ImageOps.expand(art_img, border=passepartout_size, fill=(250, 250, 248))
+    # Dış Çerçeve
     framed = ImageOps.expand(art_with_pass, border=border_px, fill=bg_color)
     
+    # Derinlik Gölgesi
     shadow_pad = int(max(framed.size) * 0.08)
     canvas = Image.new("RGBA", (framed.width + shadow_pad * 2, framed.height + shadow_pad * 2), (0, 0, 0, 0))
     shadow = Image.new("RGBA", framed.size, (0, 0, 0, 110))
