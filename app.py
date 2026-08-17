@@ -11,23 +11,18 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🖼️ Gemini Tabanlı Yapay Zeka Mockup Üretici")
-st.write("Tablonuzun stilini ve içeriğini koruyarak **Google Gemini / Imagen** altyapısıyla ücretsiz mockup'lar oluşturun.")
+st.title("🖼️ Gemini Otomatik Mockup Üretici")
+st.write("Tablonuzun stilini ve içeriğini koruyarak **Google Gemini / Imagen** altyapısıyla otomatik mockup'lar oluşturun.")
 
-# Sol Menü - Ücretsiz Google API Key
-st.sidebar.header("🔑 Google AI Bağlantısı")
-api_key = st.sidebar.text_input(
-    "Gemini API Key", 
-    type="password", 
-    help="aistudio.google.com adresinden tamamen ücretsiz alabilirsiniz."
-)
-
-if not api_key:
-    st.info("💡 Başlamak için lütfen sol menüye **Google Gemini API Key**'inizi girin (Ücretsizdir).")
+# ---------------------------------------------------------
+# GEMINI API ANAHTARI (Streamlit Secrets Üzerinden Çekilir)
+# ---------------------------------------------------------
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    client = genai.Client(api_key=GEMINI_API_KEY)
+except Exception as e:
+    st.error("API Anahtarı bulunamadı! Lütfen Streamlit Cloud ayarlarından Secrets kısmına ekleyin.")
     st.stop()
-
-# Client Bağlantısı
-client = genai.Client(api_key=api_key)
 
 # 4 Farklı İç Mekan Konsepti
 PROMPTS = {
@@ -37,6 +32,7 @@ PROMPTS = {
     "4. Sanat Galerisi Koridoru": "A photo of a modern art gallery wall with a framed art piece illuminated by gallery spotlights."
 }
 
+# Görsel Yükleme Alanı
 uploaded_file = st.file_uploader("Tablo Görselinizi Yükleyin (PNG, JPG)", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
@@ -53,7 +49,7 @@ if uploaded_file:
             ["Siyah Ahşap Çerçeve (Black Wooden Frame)", "Doğal Ahşap Çerçeve (Natural Oak Frame)", "Beyaz Çerçeve (White Frame)", "Çerçevesiz Kanvas (Thin Canvas)"]
         )
         
-        generate_btn = st.button("✨ Gemini ile 4 Mockup Üret", type="primary", use_container_width=True)
+        generate_btn = st.button("✨ 4 Mockup'ı Otomatik Üret", type="primary", use_container_width=True)
 
     if generate_btn:
         st.markdown("---")
@@ -69,7 +65,6 @@ if uploaded_file:
             )
             
             try:
-                # Gemini Imagen görsel üretimi / düzenlemesi
                 result = client.models.generate_images(
                     model='imagen-3.0-generate-002',
                     prompt=full_prompt,
@@ -90,7 +85,7 @@ if uploaded_file:
             progress_bar.progress((idx + 1) / len(PROMPTS))
 
         if generated_images:
-            st.success("✅ Tüm Gemini Mockup'ları Üretildi!")
+            st.success("✅ Tüm Gemini Mockup'ları Başarıyla Üretildi!")
             tabs = st.tabs(list(generated_images.keys()))
             for tab, (style_name, img) in zip(tabs, generated_images.items()):
                 with tab:
