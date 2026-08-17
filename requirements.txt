@@ -1,7 +1,6 @@
 streamlit
-pillow
+Pillow
 requests
-opencv-python-headless
 numpy
+opencv-python-headless
 ultralytics
-torch
