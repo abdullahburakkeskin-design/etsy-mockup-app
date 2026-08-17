@@ -114,23 +114,20 @@ st.markdown("""
 # BAŞLIK
 # ---------------------------------------------------------
 st.markdown('<h1 class="main-title">AI Art Studio PRO</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">FLUX.1 Mimarisiyle Sanatınızı Premium Mekanlarda Canlandırın</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">Sanatınızı Premium Mekanlarda Canlandırın</p>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
 def generate_ai_room_hf(prompt, retries=3, delay=3):
     """
-    Hugging Face Router API üzerinden FLUX.1-schnell modelini çağırır.
+    Güncellenmiş aktif SDXL modeli üzerinden mekan görseli üretir.
+    Hugging Face isteği başarısız olursa otomatik Pollinations yedek servisine geçer.
     """
-    if not HF_TOKEN:
-        st.error("🔑 Hugging Face Token bulunamadı. Lütfen Streamlit Secrets alanına HF_TOKEN tanımlayın.")
-        return None
-
-    # Güncel Router URL
-    API_URL = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": prompt, "parameters": {"width": 1024, "height": 768}}
+    # 1. Öncelik: Hugging Face SDXL Base Model
+    API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+    payload = {"inputs": prompt}
     
     for attempt in range(retries):
         try:
@@ -140,18 +137,19 @@ def generate_ai_room_hf(prompt, retries=3, delay=3):
             elif response.status_code in [503, 429]:
                 time.sleep(delay)
                 continue
-            else:
-                st.error(f"API Hatası ({response.status_code}): {response.text}")
-                return None
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-            if attempt < retries - 1:
-                time.sleep(delay)
-                continue
-            st.error("📡 Sunucuya bağlanırken DNS/Ağ hatası oluştu. İnternet bağlantınızı veya DNS/WARP ayarlarınızı kontrol edin.")
-            return None
-        except Exception as e:
-            st.error(f"Beklenmeyen Hata: {str(e)}")
-            return None
+        except Exception:
+            pass
+            
+    # 2. Öncelik (Yedek Servis): Anında Görsel Üreten Ücretsiz API
+    try:
+        encoded_prompt = requests.utils.quote(prompt)
+        backup_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=768&nologo=true"
+        resp = requests.get(backup_url, timeout=30)
+        if resp.status_code == 200:
+            return Image.open(io.BytesIO(resp.content)).convert("RGBA")
+    except Exception as e:
+        st.error(f"Görsel üretilemedi: {str(e)}")
+        
     return None
 
 def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.03):
@@ -229,7 +227,7 @@ if uploaded_file:
     }
 
     if generate_btn:
-        with st.spinner("🤖 FLUX Yapay zeka modeli mekanı çiziyor..."):
+        with st.spinner("🤖 Yapay zeka modeli mekanı çiziyor..."):
             room_bg = generate_ai_room_hf(prompts_map.get(style_preset))
             if room_bg is not None:
                 st.session_state.generated_room = room_bg
