@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 st.title("🖼️ Gemini Otomatik Mockup Üretici")
-st.write("Tablonuzun stilini ve içeriğini koruyarak **Google Gemini / Imagen** altyapısıyla otomatik mockup'lar oluşturun.")
+st.write("Tablonuzun stilini ve içeriğini koruyarak **Google Gemini** altyapısıyla otomatik mockup'lar oluşturun.")
 
 # ---------------------------------------------------------
 # GEMINI API ANAHTARI (Streamlit Secrets Üzerinden Çekilir)
@@ -26,10 +26,10 @@ except Exception as e:
 
 # 4 Farklı İç Mekan Konsepti
 PROMPTS = {
-    "1. Modern Minimalist Salon": "A photo of a luxury modern minimalist living room wall with a framed art piece hanging. Soft natural sunlight, elegant decor.",
-    "2. İskandinav Çalışma Alanı": "A photo of a cozy Scandinavian study room wall with a framed art piece hanging above a wooden desk with plants.",
-    "3. Boho Style Yatak Odası": "A photo of a boho-chic bedroom interior wall with a framed art piece hanging above the bed, warm textures.",
-    "4. Sanat Galerisi Koridoru": "A photo of a modern art gallery wall with a framed art piece illuminated by gallery spotlights."
+    "1. Modern Minimalist Salon": "A high quality photo of a luxury modern minimalist living room wall with this framed art piece hanging on the wall. Soft natural sunlight, elegant interior design.",
+    "2. İskandinav Çalışma Alanı": "A high quality photo of a cozy Scandinavian study room wall with this framed art piece hanging above a wooden desk with indoor plants.",
+    "3. Boho Style Yatak Odası": "A high quality photo of a boho-chic bedroom interior wall with this framed art piece hanging above the bed, warm textures, pampas grass.",
+    "4. Sanat Galerisi Koridoru": "A high quality photo of a modern art gallery corridor wall with this framed art piece illuminated by gallery spotlights."
 }
 
 # Görsel Yükleme Alanı
@@ -60,27 +60,39 @@ if uploaded_file:
         
         for idx, (style_name, room_prompt) in enumerate(PROMPTS.items()):
             full_prompt = (
-                f"Place this input artwork image inside a {frame_style} and mount it seamlessly on the wall in this room: {room_prompt}. "
-                f"Keep the exact artwork details, colors, and perspective intact inside the frame without changing the drawing."
+                f"Place this exact artwork image inside a {frame_style} and render it naturally mounted on the wall in this room: {room_prompt}. "
+                f"Do not alter the colors, details, or drawing inside the artwork."
             )
             
             try:
-                result = client.models.generate_images(
-                    model='imagen-3.0-generate-002',
-                    prompt=full_prompt,
-                    config=types.GenerateImagesConfig(
-                        number_of_images=1,
-                        aspect_ratio="4:3",
-                        output_mime_type="image/jpeg"
-                    )
+                # Güncel Gemini Multimodal Visual Modeli
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=[raw_img, full_prompt]
                 )
                 
-                for generated_image in result.generated_images:
-                    image = Image.open(io.BytesIO(generated_image.image.image_bytes))
-                    generated_images[style_name] = image
+                # Görsel yanıtı kontrolü
+                if hasattr(response, 'candidates') and response.candidates:
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            img = Image.open(io.BytesIO(part.inline_data.data))
+                            generated_images[style_name] = img
+                            break
 
             except Exception as e:
-                st.error(f"{style_name} üretilirken bir hata oluştu: {str(e)}")
+                # İkinci yedek model denemesi (Fallback)
+                try:
+                    response = client.models.generate_content(
+                        model='gemini-1.5-flash',
+                        contents=[raw_img, full_prompt]
+                    )
+                    for part in response.candidates[0].content.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data:
+                            img = Image.open(io.BytesIO(part.inline_data.data))
+                            generated_images[style_name] = img
+                            break
+                except Exception as ex:
+                    st.error(f"{style_name} üretilirken bir hata oluştu: {str(ex)}")
             
             progress_bar.progress((idx + 1) / len(PROMPTS))
 
@@ -90,3 +102,5 @@ if uploaded_file:
             for tab, (style_name, img) in zip(tabs, generated_images.items()):
                 with tab:
                     st.image(img, caption=style_name, use_container_width=True)
+        elif generate_btn:
+            st.warning("Görsel üretilemedi. Lütfen tekrar deneyin.")
