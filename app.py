@@ -11,7 +11,7 @@ from ultralytics import YOLO
 # SAYFA AYARLARI
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="AI Smart Multi-Frame Mockup Pro",
+    page_title="AI Custom Gallery Wall Mockup",
     page_icon="🖼️",
     layout="wide"
 )
@@ -28,7 +28,7 @@ def load_yolo_model():
 yolo_model = load_yolo_model()
 
 # ---------------------------------------------------------
-# YARDIMCI FONKSİYONLAR: PARÇALAMA VE ÇERÇEVELEME
+# YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
 def prepare_framed_artwork(art_img, frame_type):
     """Tek bir görsele çerçeve ve paspartu ekler."""
@@ -37,62 +37,53 @@ def prepare_framed_artwork(art_img, frame_type):
     frame_colors = {
         "Siyah Ahşap": (22, 22, 22),
         "Doğal Meşe": (165, 113, 78),
-        "Beyaz Minimal": (245, 245, 245)
+        "Beyaz Minimal": (245, 245, 245),
+        "Koyu Ceviz": (65, 38, 25)
     }
     bg_color = frame_colors.get(frame_type, (22, 22, 22))
     art_with_pass = ImageOps.expand(art_img, border=int(border_px * 0.8), fill=(250, 250, 248))
     return ImageOps.expand(art_with_pass, border=border_px, fill=bg_color)
 
-def split_and_frame_artwork(art_img, set_type, frame_type, gap_ratio=0.08):
+def combine_custom_artworks(image_list, frame_type, gap_ratio=0.08):
     """
-    Eseri seçilen set tipine göre (1, 2 veya 3 parça) böler,
-    her parçayı çerçeveler ve aralarında boşluk olan TEK BİR SET görseli birleştirir.
+    Yüklenen farklı eserleri çerçeveler ve yüksekliklerini eşitleyerek
+    yan yana boşluklu bir galeri seti (triptik/diptik) oluşturur.
     """
-    w, h = art_img.size
-    pieces = []
-    
-    num_splits = 1
-    if set_type == "2'li Set (Diptik)":
-        num_splits = 2
-    elif set_type == "3'lü Set (Triptik)":
-        num_splits = 3
+    if not image_list:
+        return None
         
-    piece_w = w // num_splits
+    framed_pieces = [prepare_framed_artwork(img, frame_type) for img in image_list]
     
-    # 1. Görseli dikey parçalara böl ve çerçevele
-    for i in range(num_splits):
-        crop_box = (i * piece_w, 0, (i + 1) * piece_w, h)
-        cropped_piece = art_img.crop(crop_box)
-        framed_piece = prepare_framed_artwork(cropped_piece, frame_type)
-        pieces.append(framed_piece)
+    # Tüm parçaların yüksekliklerini en küçük boyuta göre eşitle (orantılı)
+    target_h = min([p.height for p in framed_pieces])
+    resized_pieces = []
+    
+    for p in framed_pieces:
+        aspect = p.width / p.height
+        new_w = int(target_h * aspect)
+        resized_pieces.append(p.resize((new_w, target_h), Image.Resampling.LANCZOS))
         
-    if num_splits == 1:
-        return pieces[0]
-        
-    # 2. Çerçeveli parçaları yan yana boşluk bırakarak birleştir
-    single_fw, single_fh = pieces[0].size
-    gap_px = int(single_fw * gap_ratio)
+    # Toplam genişlik ve boşluk hesaplama
+    total_w = sum([p.width for p in resized_pieces])
+    gap_px = int(target_h * gap_ratio)
+    total_gap_w = gap_px * (len(resized_pieces) - 1)
     
-    total_set_w = (single_fw * num_splits) + (gap_px * (num_splits - 1))
-    total_set_h = single_fh
+    canvas_w = total_w + total_gap_w
+    canvas_h = target_h
     
-    # Saydam tuval oluştur
-    set_canvas = Image.new("RGBA", (total_set_w, total_set_h), (0, 0, 0, 0))
+    set_canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     
     current_x = 0
-    for p in pieces:
+    for p in resized_pieces:
         set_canvas.paste(p, (current_x, 0), p)
-        current_x += single_fw + gap_px
+        current_x += p.width + gap_px
         
     return set_canvas
 
 # ---------------------------------------------------------
-# DUVAR TESPİT VE SET YERLEŞTİRME MOTORU
+# DUVAR TESPİT VE YERLEŞTİRME MOTORU
 # ---------------------------------------------------------
 def yolo_auto_place_set(background_img, artwork_set_img, scale_factor=0.50):
-    """
-    Oluşturulan tablo setini (1'li, 2'li veya 3'lü) duvarın ortasına yerleştirir.
-    """
     bg_np = np.array(background_img.convert("RGB"))
     bg_h, bg_w, _ = bg_np.shape
     
@@ -123,7 +114,6 @@ def yolo_auto_place_set(background_img, artwork_set_img, scale_factor=0.50):
     set_w, set_h = artwork_set_img.size
     aspect_ratio = set_w / set_h
     
-    # Çoklu setlerde duvar kaplama oranını ayarla
     target_w = int(ww * scale_factor)
     target_h = int(target_w / aspect_ratio)
     
@@ -134,7 +124,7 @@ def yolo_auto_place_set(background_img, artwork_set_img, scale_factor=0.50):
     set_resized = artwork_set_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
     set_np = np.array(set_resized)
 
-    # Perspektif Bükmesi
+    # Perspektif Bükme
     src_pts = np.float32([[0, 0], [target_w, 0], [target_w, target_h], [0, target_h]])
     dst_pts = np.float32([
         [0, max(0, persp_left)],
@@ -147,7 +137,6 @@ def yolo_auto_place_set(background_img, artwork_set_img, scale_factor=0.50):
     warped_np = cv2.warpPerspective(set_np, matrix, (target_w, target_h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0,0))
     warped_img = Image.fromarray(warped_np, mode="RGBA")
 
-    # Duvarın Merkez Hizasına Yerleştirme
     center_x = wx + (ww - target_w) // 2
     center_y = wy + (wh - target_h) // 3
     
@@ -179,24 +168,53 @@ def generate_ai_room_hf(prompt):
 # ---------------------------------------------------------
 # ARAYÜZ AKIŞI
 # ---------------------------------------------------------
-st.title("🖼️ Galeri Duvarı & Çoklu Tablo Seti Mockup Pro")
+st.title("🖼️ Çoklu Eser Kombinasyon Mockup Pro")
+st.markdown("Seçtiğiniz düzene göre farklı eserleri ayrı ayrı yükleyin, sistem bunları galeri duvarında birleştirsin.")
 
-uploaded_file = st.file_uploader("Eserinizi Yükleyin", type=["png", "jpg", "jpeg"])
+# Düzen Seçimi
+layout_choice = st.radio(
+    "Galeri Düzeni",
+    ["Tek Eser", "2'li Kombinasyon (Diptik)", "3'lü Kombinasyon (Triptik)"],
+    horizontal=True
+)
 
-if uploaded_file:
-    raw_img = Image.open(uploaded_file).convert("RGBA")
+st.markdown("---")
+
+uploaded_images = []
+
+if layout_choice == "Tek Eser":
+    f = st.file_uploader("Eseri Yükleyin", type=["png", "jpg", "jpeg"], key="art1")
+    if f: uploaded_images.append(Image.open(f).convert("RGBA"))
+
+elif layout_choice == "2'li Kombinasyon (Diptik)":
+    col_u1, col_u2 = st.columns(2)
+    with col_u1:
+        f1 = st.file_uploader("1. Eser (Sol)", type=["png", "jpg", "jpeg"], key="art1")
+        if f1: uploaded_images.append(Image.open(f1).convert("RGBA"))
+    with col_u2:
+        f2 = st.file_uploader("2. Eser (Sağ)", type=["png", "jpg", "jpeg"], key="art2")
+        if f2: uploaded_images.append(Image.open(f2).convert("RGBA"))
+
+elif layout_choice == "3'lü Kombinasyon (Triptik)":
+    col_u1, col_u2, col_u3 = st.columns(3)
+    with col_u1:
+        f1 = st.file_uploader("1. Eser (Sol)", type=["png", "jpg", "jpeg"], key="art1")
+        if f1: uploaded_images.append(Image.open(f1).convert("RGBA"))
+    with col_u2:
+        f2 = st.file_uploader("2. Eser (Orta)", type=["png", "jpg", "jpeg"], key="art2")
+        if f2: uploaded_images.append(Image.open(f2).convert("RGBA"))
+    with col_u3:
+        f3 = st.file_uploader("3. Eser (Sağ)", type=["png", "jpg", "jpeg"], key="art3")
+        if f3: uploaded_images.append(Image.open(f3).convert("RGBA"))
+
+# Gerekli sayıda eser yüklendiyse stüdyo ayarlarını aç
+expected_count = 1 if layout_choice == "Tek Eser" else (2 if "2'li" in layout_choice else 3)
+
+if len(uploaded_images) == expected_count:
+    st.markdown("---")
+    col_opt1, col_opt2 = st.columns(2)
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(raw_img, caption="Orijinal Yüklenen Eser", use_container_width=True)
-        
-    with col2:
-        set_choice = st.radio(
-            "Tablo Yerleşim Düzeni",
-            ["Tek Parça", "2'li Set (Diptik)", "3'lü Set (Triptik)"],
-            horizontal=True
-        )
-        
+    with col_opt1:
         style_preset = st.selectbox(
             "Mekan Konsepti",
             [
@@ -205,12 +223,13 @@ if uploaded_file:
                 "Endüstriyel Loft"
             ]
         )
-        frame_choice = st.selectbox("Çerçeve Stili", ["Siyah Ahşap", "Doğal Meşe", "Beyaz Minimal"])
+    with col_opt2:
+        frame_choice = st.selectbox("Çerçeve Stili", ["Siyah Ahşap", "Doğal Meşe", "Beyaz Minimal", "Koyu Ceviz"])
         
-        auto_btn = st.button("🚀 Tablo Setini Oluştur ve Hizala")
+    generate_btn = st.button("🚀 Kombinasyonu Duvara Yerleştir")
 
-    if auto_btn:
-        with st.spinner("🤖 Eser parçalanıyor, çerçeveleniyor ve galeri duvarına diziliyor..."):
+    if generate_btn:
+        with st.spinner("🤖 Eserler hizalanıyor, çerçeveleniyor ve akıllı duvar mekanına yerleştiriliyor..."):
             prompts = {
                 "Modern İskandinav Salonu": "A bright modern Scandinavian living room interior, wide empty wall space, oak furniture, 8k",
                 "Minimalist Sanat Galerisi": "A minimalist art gallery room, wide clean beige wall, museum spotlighting, 8k",
@@ -220,11 +239,21 @@ if uploaded_file:
             room_bg = generate_ai_room_hf(prompts[style_preset])
             
             if room_bg:
-                # 1. Eseri parçala ve set haline getir
-                artwork_set = split_and_frame_artwork(raw_img, set_choice, frame_choice)
+                # Eserleri kombinle
+                combined_set = combine_custom_artworks(uploaded_images, frame_choice)
                 
-                # 2. Seti duvara akıllı olarak yerleştir
-                final_mockup = yolo_auto_place_set(room_bg, artwork_set)
+                # Duvara yerleştir
+                final_mockup = yolo_auto_place_set(room_bg, combined_set)
                 
-                st.subheader(f"✨ Galeri Duvarı Sonucu ({set_choice})")
+                st.subheader("✨ Galeri Duvarı Kombinasyon Sonucu")
                 st.image(final_mockup.convert("RGB"), use_container_width=True)
+                
+                buf = io.BytesIO()
+                final_mockup.convert("RGB").save(buf, format="JPEG", quality=95)
+                st.download_button(
+                    label="📥 Kombinasyon Mockup'ı İndir",
+                    data=buf.getvalue(),
+                    file_name="gallery_wall_mockup.jpg",
+                    mime="image/jpeg",
+                    use_container_width=True
+                )
