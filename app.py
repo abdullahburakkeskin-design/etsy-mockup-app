@@ -5,97 +5,122 @@ import requests
 import time
 import numpy as np
 import cv2
+from ultralytics import YOLO
 
 # ---------------------------------------------------------
 # SAYFA AYARLARI
 # ---------------------------------------------------------
 st.set_page_config(
-    page_title="AI Auto-Perspective Mockup Pro",
-    page_icon="🎨",
+    page_title="AI Ultra-Accurate Auto Mockup",
+    page_icon="🖼️",
     layout="wide"
 )
 
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
 
 # ---------------------------------------------------------
-# OTOMATİK DUVAR VE PERSPERTİF HESAPLAMA MOTORU
+# YOLOV8 MODELİNİ YÜKLE (CACHED)
 # ---------------------------------------------------------
-def auto_detect_wall_and_place(background_img, artwork_img, scale_ratio=0.35):
+@st.cache_resource
+def load_yolo_model():
+    # Hafif ve hızlı segmentasyon modeli
+    return YOLO("yolov8n-seg.pt")
+
+yolo_model = load_yolo_model()
+
+# ---------------------------------------------------------
+# YOLOV8 İLE DUVAR & PERSPERKTİF TESPİT MOTORU
+# ---------------------------------------------------------
+def yolo_auto_place_artwork(background_img, artwork_img, scale_factor=0.40):
     """
-    Arka plandaki baskın duvar/odak alanını otomatik tespit eder,
-    perspektif merkezini hesaplar ve eseri otomatik boyutlandırıp yerleştirir.
+    YOLOv8-Seg ile odadaki duvar alanını piksel düzeyinde tespit eder.
+    Duvarın en uygun boş alanını ve açılarını çıkarıp eseri yerleştirir.
     """
     bg_np = np.array(background_img.convert("RGB"))
     bg_h, bg_w, _ = bg_np.shape
     
-    # 1. Görseli gri tonlamaya çevirip duvardaki ışık/kenar kontrastını analiz et
-    gray = cv2.cvtColor(bg_np, cv2.COLOR_RGB2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    # 1. YOLOv8 ile Segmentasyon Tahmini
+    results = yolo_model(bg_np, verbose=False)[0]
     
-    # 2. Kenar tespiti (Canny Edge) ile odadaki ana hatları bul
-    edges = cv2.Canny(blurred, 50, 150)
+    wall_polygon = None
     
-    # 3. Konturları bul ve en geniş düz alanı (muhtemel duvarı) seç
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    # Varsayılan odak alanı: Odanın üst-orta perspektif bölgesi
-    wall_box = [int(bg_w * 0.25), int(bg_h * 0.15), int(bg_w * 0.50), int(bg_h * 0.50)]
-    
-    if contours:
-        # En büyük konturları tara
-        largest_contour = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(largest_contour) > (bg_w * bg_h * 0.1):
-            x, y, w, h = cv2.boundingRect(largest_contour)
-            wall_box = [x, y, w, h]
+    # Eserin yerleştirilebileceği potansiyel alan tespiti (Arka plan / Duvar bölgesi)
+    if results.masks is not None:
+        # En büyük alanı kaplayan segment maskesini al
+        masks = results.masks.xy
+        if len(masks) > 0:
+            # Alanı en büyük olan poligonu seç
+            wall_polygon = max(masks, key=lambda x: cv2.contourArea(x.astype(np.int32)))
 
-    # 4. Otomatik Ölçeklendirme ve Merkezleme
-    target_x, target_y, target_w, target_h = wall_box
-    
+    # Eğer özel duvar maskesi bulunamazsa odanın merkez odak bölgesini seç
+    if wall_polygon is None or len(wall_polygon) < 4:
+        x1, y1 = int(bg_w * 0.25), int(bg_h * 0.15)
+        x2, y2 = int(bg_w * 0.75), int(bg_h * 0.65)
+        wall_box = [x1, y1, x2 - x1, y2 - y1]
+        persp_left, persp_right = 0, 0
+    else:
+        # Poligonun Minimum Alan Dikdörtgenini (Rotated Rectangle) hesapla
+        rect = cv2.minAreaRect(wall_polygon.astype(np.int32))
+        box = cv2.boxPoints(rect)
+        box = np.int32(box)
+        
+        # Bounding Box Koordinatları
+        x, y, w, h = cv2.boundingRect(wall_polygon.astype(np.int32))
+        wall_box = [x, y, w, h]
+        
+        # Duvarın sağ-sol yükseklik farkından perspektif eğimini hesapla
+        pts = box[np.argsort(box[:, 0])] # X'e göre sırala (sol noktalar vs sağ noktalar)
+        left_pts = pts[:2]
+        right_pts = pts[2:]
+        
+        left_h = abs(left_pts[0][1] - left_pts[1][1])
+        right_h = abs(right_pts[0][1] - right_pts[1][1])
+        
+        # Eğim farkını perspektif bükmesi olarak kullan
+        persp_left = int((left_h - right_h) * 0.15) if left_h > 0 else 0
+        persp_right = -persp_left
+
+    # 2. Eseri Duvar Boyutuna Göre Ölçekle
+    wx, wy, ww, wh = wall_box
     art_w, art_h = artwork_img.size
     aspect_ratio = art_w / art_h
     
-    # Eser boyutunu duvar boyutuna oranla
-    new_h = int(target_h * scale_ratio)
-    new_w = int(new_h * aspect_ratio)
+    target_h = int(wh * scale_factor)
+    target_w = int(target_h * aspect_ratio)
     
-    if new_w > target_w:
-        new_w = int(target_w * scale_ratio)
-        new_h = int(new_w / aspect_ratio)
+    if target_w > (ww * 0.8):
+        target_w = int(ww * 0.8)
+        target_h = int(target_w / aspect_ratio)
 
-    art_resized = artwork_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    
-    # Otomatik Merkez X ve Y (Duvarın odak noktası)
-    center_x = target_x + (target_w - new_w) // 2
-    center_y = target_y + (target_h - new_h) // 3  # Göz hizası
-    
-    # 5. Hafif Perspektif Kaçış Açısını Otomatik Çıkar (Trapezoid Bükme)
-    # Duvarın sağ/sol derinliğine göre otomatik köşe bükmesi
+    art_resized = artwork_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
     art_np = np.array(art_resized)
-    src_pts = np.float32([[0, 0], [new_w, 0], [new_w, new_h], [0, new_h]])
+
+    # 3. Homografi (Perspektif Bükme) Uygula
+    src_pts = np.float32([[0, 0], [target_w, 0], [target_w, target_h], [0, target_h]])
     
-    # Sol ve sağ derinlik eğimi (Odadaki ışık ve perspektif dengesinden türetilir)
-    perspective_skew = int(new_h * 0.03) 
-    
+    # Eğim değerlerine göre 4 köşeyi bük
     dst_pts = np.float32([
-        [0, perspective_skew], 
-        [new_w, 0], 
-        [new_w, new_h], 
-        [0, new_h - perspective_skew]
+        [0, max(0, persp_left)],
+        [target_w, max(0, persp_right)],
+        [target_w, target_h - max(0, -persp_right)],
+        [0, target_h - max(0, -persp_left)]
     ])
     
     matrix = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    warped_np = cv2.warpPerspective(art_np, matrix, (new_w, new_h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0,0))
-    
+    warped_np = cv2.warpPerspective(art_np, matrix, (target_w, target_h), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0,0))
     warped_img = Image.fromarray(warped_np, mode="RGBA")
+
+    # 4. Duvarın Tam Merkezine Yerleştir
+    center_x = wx + (ww - target_w) // 2
+    center_y = wy + (wh - target_h) // 3  # Göz hizası
     
-    # Tam Otomatik Birleştirme
     final_img = background_img.copy()
     final_img.paste(warped_img, (max(0, center_x), max(0, center_y)), warped_img)
     
     return final_img
 
 # ---------------------------------------------------------
-# ODA ÜRETİM FONKSİYONU
+# ODA ÜRETİMİ VE YARDIMCI FONKSİYONLAR
 # ---------------------------------------------------------
 def generate_ai_room_hf(prompt):
     API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-xl-base-1.0"
@@ -109,7 +134,6 @@ def generate_ai_room_hf(prompt):
     except Exception:
         pass
         
-    # Yedek Servis
     encoded_prompt = requests.utils.quote(prompt)
     backup_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=768&nologo=true"
     resp = requests.get(backup_url, timeout=30)
@@ -133,7 +157,8 @@ def prepare_framed_artwork(art_img, frame_type):
 # ---------------------------------------------------------
 # ARAYÜZ
 # ---------------------------------------------------------
-st.title("🎨 Tam Otomatik Perspektif Mockup Oluşturucu")
+st.title("🎯 AI Smart Segmented Perspective Mockup")
+st.caption("YOLOv8 Segmentasyon ile duvarı otomatik algılar, açıları hesaplar ve resmi oturtur.")
 
 uploaded_file = st.file_uploader("Eserinizi Yükleyin", type=["png", "jpg", "jpeg"])
 
@@ -155,14 +180,14 @@ if uploaded_file:
         )
         frame_choice = st.selectbox("Çerçeve Stili", ["Siyah Ahşap", "Doğal Meşe", "Beyaz Minimal"])
         
-        auto_btn = st.button("✨ Otomatik Hizala ve Oluştur")
+        auto_btn = st.button("🚀 YOLOv8 ile Akıllı Ototir")
 
     if auto_btn:
-        with st.spinner("🤖 Odadaki duvar tespiti yapılıyor ve perspektif otomatik hesaplanıyor..."):
+        with st.spinner("🧠 YOLOv8 duvar segmentasyonu yapıyor ve perspektif oturtuluyor..."):
             prompts = {
-                "Modern İskandinav Salonu": "A bright modern Scandinavian living room interior, front facing neutral wall, oak furniture, 8k",
-                "Minimalist Sanat Galerisi": "A minimalist art gallery room, front wall, museum spotlighting, clean beige wall, 8k",
-                "Endüstriyel Loft": "An industrial loft living room with concrete wall, soft ambient lighting, 8k photo"
+                "Modern İskandinav Salonu": "A bright modern Scandinavian living room interior, clear wall space, oak furniture, 8k",
+                "Minimalist Sanat Galerisi": "A minimalist art gallery room, smooth empty wall, museum spotlighting, 8k",
+                "Endüstriyel Loft": "An industrial loft living room with clear concrete wall, ambient lighting, 8k photo"
             }
             
             room_bg = generate_ai_room_hf(prompts[style_preset])
@@ -170,8 +195,8 @@ if uploaded_file:
             if room_bg:
                 framed_art = prepare_framed_artwork(raw_img, frame_choice)
                 
-                # TAM OTOMATİK YERLEŞTİRME HESAPLAMASI
-                final_mockup = auto_detect_wall_and_place(room_bg, framed_art)
+                # YOLOV8 SEGMENTASYON İLE TAM OTOMATİK YERLEŞTİRME
+                final_mockup = yolo_auto_place_artwork(room_bg, framed_art)
                 
-                st.subheader("✨ Otomatik Hizalanmış Sonuç")
+                st.subheader("✨ Tam Hassasiyetle Hizalanmış Mockup")
                 st.image(final_mockup.convert("RGB"), use_container_width=True)
