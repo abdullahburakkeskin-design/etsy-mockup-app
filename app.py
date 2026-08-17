@@ -15,21 +15,28 @@ st.title("🖼️ AI Art Studio: Yapay Zeka Tabanlı Fotogerçekçi Mockup")
 st.write("Yapay zeka modellerini kullanarak tablonuzu fotogerçekçi iç mekan ve galeri tasarımlarına dönüştürün.")
 
 # ---------------------------------------------------------
-# POLINATIONS AI / FLUX - YAPAY ZEKA GÖRSEL ÜRETİMİ (ÜCRETSİZ)
+# POLINATIONS AI / FLUX - OTOMATİK TEKRAR DENEMELİ AI İSTEĞİ
 # ---------------------------------------------------------
-def generate_ai_room_background(prompt, width=1280, height=854):
+def generate_ai_room_background(prompt, width=1280, height=854, max_retries=3):
     """
-    Ücretsiz ve sınırsız Yapay Zeka görsel üretim servisi (FLUX Model altyapısı)
+    Zaman aşımı korumalı ve otomatik yeniden deneme (Retry) mekanizmalı AI üretimi.
     """
     encoded_prompt = urllib.parse.quote(prompt)
-    seed = int(time.time()) % 100000
-    image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&model=flux&nologo=true"
     
-    response = requests.get(image_url, timeout=30)
-    if response.status_code == 200:
-        return Image.open(io.BytesIO(response.content)).convert("RGBA")
-    else:
-        raise Exception("AI Görsel servisine erişilemedi.")
+    for attempt in range(1, max_retries + 1):
+        try:
+            seed = int(time.time()) % 100000 + attempt
+            image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&model=flux&nologo=true"
+            
+            # Timeout süresini 60 saniyeye çıkardık
+            response = requests.get(image_url, timeout=60)
+            
+            if response.status_code == 200:
+                return Image.open(io.BytesIO(response.content)).convert("RGBA")
+        except requests.exceptions.RequestException:
+            if attempt == max_retries:
+                raise Exception("AI sunucusu yoğun yanıt veremedi. Lütfen birkaç saniye sonra tekrar 'Mockup Oluştur' butonuna basın.")
+            time.sleep(2)  # Tekrar denemeden önce 2 saniye bekle
 
 # ---------------------------------------------------------
 # ÇERÇEVE VE GÖLGE HAZIRLAMA FONKSİYONU
@@ -108,9 +115,8 @@ if uploaded_file:
         generate_btn = st.button("🚀 Yapay Zeka ile Mockup Oluştur", type="primary", use_container_width=True)
 
     if generate_btn:
-        with st.spinner("🤖 Yapay zeka fotogerçekçi iç mekanı çiziyor ve tablonuzu yerleştiriyor... (Yaklaşık 10 sn)"):
+        with st.spinner("🤖 Yapay zeka oda görselini hazırlıyor... Lütfen bekleyin."):
             try:
-                # Prompt Seçimi
                 prompts_map = {
                     "Modern İskandinav Salonu (Aydınlık, Ahşap Mobilyalar, Bitkiler)": "A bright modern Scandinavian living room interior, neutral soft wall, oak wood furniture, indoor green plants, natural sunlight through window, architectural digest photograph, 8k resolution, photorealistic",
                     "Lüks Minimalist Galeri Duvarı (Stüdyo Işıklandırması)": "A minimalist art gallery room, museum spotlighting, clean beige plaster wall, elegant interior design, soft shadows, 8k professional interior photography",
@@ -134,7 +140,7 @@ if uploaded_file:
                 
                 scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
                 
-                # 4. Tabloyu duvara (merkeze hafif yukarı) monte et
+                # 4. Tabloyu duvara monte et
                 pos_x = (wall_w - target_w) // 2
                 pos_y = (wall_h - target_h) // 2 - int(wall_h * 0.05)
                 
