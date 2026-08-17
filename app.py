@@ -1,128 +1,154 @@
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import io
-import os
-import replicate
 
 st.set_page_config(
-    page_title="AI Art Studio: Mockup & 8K Upscaler",
-    page_icon="🎨",
+    page_title="AI Art Studio - Ücretsiz & Sınırsız",
+    page_icon="🖼️",
     layout="wide"
 )
 
-st.title("🎨 AI Art Studio: Gerçekçi Mockup & 8K Upscaler")
-st.write("Tablonuzu yükleyin; yapay zeka ile **gerçekçi oda mockup'ları** oluşturun ve **8K / 300 DPI kalitesine yükseltin**.")
+st.title("🖼️ AI Art Studio: Ücretsiz Mockup & 300 DPI Baskı Oluşturucu")
+st.write("Sıfır maliyet ve sınırsız kullanım. Tablonuzu orijinal haliyle koruyarak **duvar mockup'ı hazırlayın** veya **300 DPI baskı kalitesine** getirin.")
 
-# Streamlit Secrets Üzerinden Token Kontrolü
-try:
-    REPLICATE_API_TOKEN = st.secrets["REPLICATE_API_TOKEN"]
-    os.environ["REPLICATE_API_TOKEN"] = REPLICATE_API_TOKEN
-except Exception:
-    st.error("⚠️ API Şifresi (Token) Bulunamadı! Lütfen Streamlit Settings > Secrets alanına REPLICATE_API_TOKEN değerinizi ekleyin.")
-    st.stop()
+# ---------------------------------------------------------
+# ÇERÇEVE VE GÖLGE HAZIRLAMA FONKSİYONU
+# ---------------------------------------------------------
+def prepare_framed_artwork(art_img, frame_type, frame_thickness_ratio=0.04):
+    w, h = art_img.size
+    border_px = int(max(w, h) * frame_thickness_ratio)
+    
+    frame_colors = {
+        "Siyah Ahşap": (22, 22, 22),
+        "Doğal Meşe Ahşap": (165, 113, 78),
+        "Beyaz Minimal": (245, 245, 245),
+        "Koyu Ceviz": (65, 38, 25)
+    }
+    
+    bg_color = frame_colors.get(frame_type, (22, 22, 22))
+    
+    # Paspartu (İç Beyaz Galeri Kenarlığı)
+    passepartout_size = int(border_px * 0.7)
+    art_with_pass = ImageOps.expand(art_img, border=passepartout_size, fill=(250, 250, 248))
+    
+    # Dış Çerçeve
+    framed = ImageOps.expand(art_with_pass, border=border_px, fill=bg_color)
+    
+    # Gerçekçi Yumuşak Gölge (Drop Shadow)
+    shadow_pad = int(max(framed.size) * 0.08)
+    canvas_w = framed.width + shadow_pad * 2
+    canvas_h = framed.height + shadow_pad * 2
+    
+    canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    shadow = Image.new("RGBA", framed.size, (0, 0, 0, 100))
+    shadow_blur = ImageFilter.GaussianBlur(radius=int(shadow_pad * 0.45))
+    
+    canvas.paste(shadow, (shadow_pad + int(shadow_pad*0.25), shadow_pad + int(shadow_pad*0.35)))
+    canvas = canvas.filter(shadow_blur)
+    canvas.paste(framed, (shadow_pad, shadow_pad))
+    
+    return canvas
 
-# Sekme Yapısı
-tab1, tab2 = st.tabs(["🖼️ Yapay Zeka Oda Mockup'ı", "🔍 4K / 8K Görsel Netleştirme (Upscaler)"])
+# ---------------------------------------------------------
+# ARAYÜZ VE SEKMELER
+# ---------------------------------------------------------
+tab1, tab2 = st.tabs(["🖼️ Gerçekçi Oda Mockup'ı", "📐 300 DPI / Baskı Çözünürlüğü Modu"])
 
 uploaded_file = st.file_uploader("Tablo Görselinizi Yükleyin (PNG, JPG)", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
-    raw_img = Image.open(uploaded_file)
+    raw_img = Image.open(uploaded_file).convert("RGBA")
     
-    # ---------------------------------------------------------
-    # TAB 1: AI MOCKUP GENERATOR
-    # ---------------------------------------------------------
+    # TAB 1: GERÇEKÇİ ODA MOCKUP'I
     with tab1:
-        col1, col2 = st.columns([1, 1])
+        col_l, col_r = st.columns([1, 1])
         
-        with col1:
+        with col_l:
             st.image(raw_img, caption="Orijinal Tablonuz", use_container_width=True)
             
-        with col2:
-            st.markdown("### ⚙️ Mockup Seçenekleri")
-            style_option = st.selectbox(
-                "İç Mekan Konsepti",
-                [
-                    "Modern Minimalist Salon (Gün Işığı)",
-                    "İskandinav Çalışma Odası (Ahşap & Bitkiler)",
-                    "Lüks Sanat Galerisi (Spot Işıklar)",
-                    "Boho-Chic Yatak Odası (Toprak Tonları)"
-                ]
+        with col_r:
+            st.markdown("### ⚙️ Mockup Stil Seçenekleri")
+            room_choice = st.selectbox(
+                "İç Mekan Arka Planı", 
+                ["Modern Minimalist Nötr Duvar", "İskandinav Ahşap Konsept", "Sıcak Krem / Galeri Tonu"]
             )
-            frame_style = st.selectbox(
+            frame_choice = st.selectbox(
                 "Çerçeve Stili", 
-                ["Siyah Ahşap Çerçeve", "Doğal Meşe Çerçeve", "Beyaz Çerçeve", "Çerçevesiz İnce Kanvas"]
+                ["Siyah Ahşap", "Doğal Meşe Ahşap", "Beyaz Minimal", "Koyu Ceviz"]
             )
+            frame_thick = st.slider("Çerçeve Kalınlığı", 0.02, 0.08, 0.04, step=0.01)
             
-            run_mockup = st.button("✨ Yapay Zeka İle Odada Oluştur", type="primary", use_container_width=True)
+            generate_btn = st.button("✨ Mockup'ı Hazırla", type="primary", use_container_width=True)
 
-        if run_mockup:
-            st.markdown("---")
-            st.info("⏳ Yapay Zeka tablonuzun dokusunu koruyarak odayı tasarlıyor...")
+        if generate_btn:
+            framed_canvas = prepare_framed_artwork(raw_img, frame_choice, frame_thick)
             
-            img_bytes = io.BytesIO()
-            raw_img.save(img_bytes, format="PNG")
-            img_bytes.seek(0)
-            
-            prompts = {
-                "Modern Minimalist Salon (Gün Işığı)": "A high-end modern minimalist living room wall, soft natural sunlight, luxury interior design, stylish furniture, realistic photo",
-                "İskandinav Çalışma Odası (Ahşap & Bitkiler)": "A cozy Scandinavian style room wall with wooden desk, indoor plant, warm aesthetic ambient lighting, realistic photo",
-                "Lüks Sanat Galerisi (Spot Işıklar)": "A modern art gallery interior corridor wall, spotlighting, sleek hardwood floors, premium atmosphere, realistic photo",
-                "Boho-Chic Yatak Odası (Toprak Tonları)": "A stylish Boho-chic bedroom interior, textured beige wall, pampas grass decor, warm natural shadows, realistic photo"
+            # Duvar Arka Plan Renk Seçimi
+            wall_colors = {
+                "Modern Minimalist Nötr Duvar": (232, 230, 223),
+                "İskandinav Ahşap Konsept": (218, 212, 201),
+                "Sıcak Krem / Galeri Tonu": (244, 240, 230)
             }
             
-            full_prompt = (
-                f"A wall artwork framed with {frame_style} seamlessly hanging on the wall in this room: {prompts[style_option]}. "
-                f"Keep the original artwork untouched and identical inside the frame, 8k resolution, professional interior photography."
+            bg_color = wall_colors.get(room_choice, (232, 230, 223))
+            wall_w, wall_h = 1920, 1080
+            room_bg = Image.new("RGBA", (wall_w, wall_h), bg_color)
+            
+            # Tabloyu Duvara Orantılı Yerleştirme
+            target_h = int(wall_h * 0.58)
+            aspect = framed_canvas.width / framed_canvas.height
+            target_w = int(target_h * aspect)
+            
+            scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            
+            pos_x = (wall_w - target_w) // 2
+            pos_y = (wall_h - target_h) // 2 - 40
+            
+            room_bg.paste(scaled_artwork, (pos_x, pos_y), scaled_artwork)
+            final_result = room_bg.convert("RGB")
+            
+            st.success("✅ Mockup'ınız Başarıyla Oluşturuldu!")
+            st.image(final_result, caption=f"{room_choice} - {frame_choice}", use_container_width=True)
+            
+            buf = io.BytesIO()
+            final_result.save(buf, format="JPEG", quality=95)
+            st.download_button(
+                label="📥 Yüksek Kaliteli Mockup'ı İndir",
+                data=buf.getvalue(),
+                file_name="art_mockup.jpg",
+                mime="image/jpeg",
+                use_container_width=True
             )
-            
-            try:
-                output = replicate.run(
-                    "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-                    input={
-                        "image": img_bytes,
-                        "prompt": full_prompt,
-                        "prompt_strength": 0.8,
-                        "num_outputs": 1
-                    }
-                )
-                if output and len(output) > 0:
-                    st.success("✅ Mockup Başarıyla Üretildi!")
-                    st.image(output[0], caption="Yapay Zeka Mockup Çıktısı", use_container_width=True)
-            except Exception as e:
-                st.error(f"Mockup oluşturulurken bir hata meydana geldi: {str(e)}")
 
-    # ---------------------------------------------------------
-    # TAB 2: 4K / 8K RESOLUTION UPSCALER (300 DPI)
-    # ---------------------------------------------------------
+    # TAB 2: 300 DPI BASKI MODU
     with tab2:
-        st.markdown("### 🔍 Görsel Çözünürlüğünü Yükseltme (Super Resolution)")
-        st.write("Görselinizin piksellerini yapay zeka ile doldurarak netleştirin ve baskıya hazır (300 DPI) hale getirin.")
+        st.markdown("### 🖨️ 300 DPI Baskıya Hazırlama & Kalite Yükseltme")
+        st.write("Etsy veya baskı mağazaları için görselin piksellerini büyütün ve matbaa standardı olan **300 DPI** üstverisini ekleyin.")
         
-        scale_factor = st.radio("Hedef Çözünürlük Büyüklüğü", ["2x (Full HD / 2K)", "4x (4K Ultra HD)", "8x (8K Baskı Kalitesi - 300 DPI)"])
-        scale_map = {"2x (Full HD / 2K)": 2, "4x (4K Ultra HD)": 4, "8x (8K Baskı Kalitesi - 300 DPI)": 8}
+        dpi_target = st.radio("Çözünürlük Çarpanı", ["2x Kalite Yükseltme (300 DPI)", "4x Yüksek Kalite Baskı (300 DPI)"])
         
-        run_upscale = st.button("🚀 Görseli Netleştir ve Büyüt", type="primary")
+        run_dpi = st.button("🚀 Baskı Dosyasını Oluştur (300 DPI)", type="primary")
         
-        if run_upscale:
-            st.info("⏳ Yapay Zeka pikselleri yeniden işliyor ve netleştiriyor...")
+        if run_dpi:
+            multiplier = 2 if "2x" in dpi_target else 4
             
-            img_bytes = io.BytesIO()
-            raw_img.save(img_bytes, format="PNG")
-            img_bytes.seek(0)
+            new_w = raw_img.width * multiplier
+            new_h = raw_img.height * multiplier
             
-            try:
-                output_url = replicate.run(
-                    "nightmareai/real-esrgan:42203314ed1d2ee0b5511116347e4122cd0ed303e6de732238d6732a603b857f",
-                    input={
-                        "image": img_bytes,
-                        "scale": scale_map[scale_factor],
-                        "face_enhance": False
-                    }
-                )
-                
-                if output_url:
-                    st.success(f"✅ Görsel Başarıyla {scale_factor} Seviyesine Yükseltildi!")
-                    st.image(output_url, caption="Yüksek Çözünürlüklü Çıktı", use_container_width=True)
-            except Exception as e:
-                st.error(f"Upscale işlemi sırasında hata oluştu: {str(e)}")
+            # Lanczos algoritmasıyla yüksek kaliteli piksel genişletme
+            resized_img = raw_img.resize((new_w, new_h), Image.Resampling.LANCZOS).convert("RGB")
+            
+            buf = io.BytesIO()
+            # 300 DPI metadata ekleyerek kaydetme
+            resized_img.save(buf, format="JPEG", quality=98, dpi=(300, 300))
+            
+            st.success(f"✅ Görsel {new_w}x{new_h} Piksel boyutuna getirildi ve 300 DPI olarak ayarlandı!")
+            st.image(resized_img, caption=f"300 DPI Çıktı ({new_w} x {new_h} px)", use_container_width=True)
+            
+            st.download_button(
+                label="📥 300 DPI Baskı Dosyasını İndir",
+                data=buf.getvalue(),
+                file_name="printable_artwork_300dpi.jpg",
+                mime="image/jpeg",
+                use_container_width=True
+            )
