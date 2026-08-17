@@ -19,13 +19,15 @@ st.set_page_config(
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
 
 # ---------------------------------------------------------
-# YOLOV8 MODELİNİ YÜKLE
-# ---------------------------------------------------------
 @st.cache_resource
 def load_yolo_model():
-    return YOLO("yolov8n-seg.pt")
-
-yolo_model = load_yolo_model()
+    try:
+        # 'yolov8n-seg.pt' dosyasını çalışma dizinine manuel indirin 
+        # ve kodu o dosyayı görecek şekilde güncelleyin.
+        return YOLO("yolov8n-seg.pt")
+    except Exception as e:
+        st.error(f"Model yüklenemedi: {e}")
+        return None
 
 # ---------------------------------------------------------
 # YARDIMCI FONKSİYONLAR
