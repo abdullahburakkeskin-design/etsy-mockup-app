@@ -15,28 +15,32 @@ st.title("🖼️ AI Art Studio: Yapay Zeka Tabanlı Fotogerçekçi Mockup")
 st.write("Yapay zeka modellerini kullanarak tablonuzu fotogerçekçi iç mekan ve galeri tasarımlarına dönüştürün.")
 
 # ---------------------------------------------------------
-# POLINATIONS AI / FLUX - OTOMATİK TEKRAR DENEMELİ AI İSTEĞİ
+# POLINATIONS AI - YEDEK SUNUCULU VE KONTROLLÜ AI İSTEĞİ
 # ---------------------------------------------------------
-def generate_ai_room_background(prompt, width=1280, height=854, max_retries=3):
+def generate_ai_room_background(prompt, width=1280, height=854):
     """
-    Zaman aşımı korumalı ve otomatik yeniden deneme (Retry) mekanizmalı AI üretimi.
+    Hızlı ve yedekli AI görsel oluşturucu.
     """
     encoded_prompt = urllib.parse.quote(prompt)
     
-    for attempt in range(1, max_retries + 1):
-        try:
-            seed = int(time.time()) % 100000 + attempt
-            image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&model=flux&nologo=true"
-            
-            # Timeout süresini 60 saniyeye çıkardık
-            response = requests.get(image_url, timeout=60)
-            
-            if response.status_code == 200:
-                return Image.open(io.BytesIO(response.content)).convert("RGBA")
-        except requests.exceptions.RequestException:
-            if attempt == max_retries:
-                raise Exception("AI sunucusu yoğun yanıt veremedi. Lütfen birkaç saniye sonra tekrar 'Mockup Oluştur' butonuna basın.")
-            time.sleep(2)  # Tekrar denemeden önce 2 saniye bekle
+    # İki farklı model seçeneğiyle deneme yapar (Önce turbo, başarısız olursa flux)
+    models = ["turbo", "flux"]
+    
+    for model_name in models:
+        for attempt in range(2):  # Her model için 2 defa dener
+            try:
+                seed = int(time.time()) % 100000 + attempt
+                image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&seed={seed}&model={model_name}&nologo=true"
+                
+                response = requests.get(image_url, timeout=35)
+                
+                if response.status_code == 200 and len(response.content) > 5000:
+                    img = Image.open(io.BytesIO(response.content)).convert("RGBA")
+                    return img
+            except Exception:
+                time.sleep(1)
+                
+    return None  # Tüm denemeler başarısız olursa None döner
 
 # ---------------------------------------------------------
 # ÇERÇEVE VE GÖLGE HAZIRLAMA FONKSİYONU
@@ -115,7 +119,7 @@ if uploaded_file:
         generate_btn = st.button("🚀 Yapay Zeka ile Mockup Oluştur", type="primary", use_container_width=True)
 
     if generate_btn:
-        with st.spinner("🤖 Yapay zeka oda görselini hazırlıyor... Lütfen bekleyin."):
+        with st.spinner("🤖 Yapay zeka iç mekanı çiziyor... Lütfen birkaç saniye bekleyin."):
             try:
                 prompts_map = {
                     "Modern İskandinav Salonu (Aydınlık, Ahşap Mobilyalar, Bitkiler)": "A bright modern Scandinavian living room interior, neutral soft wall, oak wood furniture, indoor green plants, natural sunlight through window, architectural digest photograph, 8k resolution, photorealistic",
@@ -126,39 +130,42 @@ if uploaded_file:
                 
                 selected_prompt = custom_prompt if style_preset == "Özel Prompt (Kendi İç Mekanınızı Yazın)" else prompts_map.get(style_preset)
                 
-                # 1. Yapay Zeka ile fotogerçekçi oda arka planını çiz
+                # 1. Yapay Zeka ile oda arka planını çiz (Gözden geçirilmiş güvenli fonksiyon)
                 ai_room_bg = generate_ai_room_background(selected_prompt)
                 
-                # 2. Tabloyu çerçevele ve gölgelendir
-                framed_canvas = prepare_framed_artwork(raw_img, frame_choice)
-                
-                # 3. Tabloyu yapay zeka odasının boyutuna uygun ölçekle
-                wall_w, wall_h = ai_room_bg.size
-                target_h = int(wall_h * 0.45)
-                aspect = framed_canvas.width / framed_canvas.height
-                target_w = int(target_h * aspect)
-                
-                scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
-                
-                # 4. Tabloyu duvara monte et
-                pos_x = (wall_w - target_w) // 2
-                pos_y = (wall_h - target_h) // 2 - int(wall_h * 0.05)
-                
-                ai_room_bg.paste(scaled_artwork, (pos_x, pos_y), scaled_artwork)
-                final_result = ai_room_bg.convert("RGB")
-                
-                st.success("✅ Yapay Zeka Mockup'ınız Başarıyla Hazırlandı!")
-                st.image(final_result, caption=f"AI Üretimi: {style_preset}", use_container_width=True)
-                
-                buf = io.BytesIO()
-                final_result.save(buf, format="JPEG", quality=95)
-                st.download_button(
-                    label="📥 Yüksek Çözünürlüklü Yapay Zeka Mockup'ını İndir",
-                    data=buf.getvalue(),
-                    file_name="ai_mockup_result.jpg",
-                    mime="image/jpeg",
-                    use_container_width=True
-                )
+                if ai_room_bg is None:
+                    st.warning("⚠️ Yapay zeka sunucuları şu an çok yoğun olduğu için yanıt veremedi. Lütfen 'Mockup Oluştur' butonuna tekrar basarak yeniden deneyin.")
+                else:
+                    # 2. Tabloyu çerçevele ve gölgelendir
+                    framed_canvas = prepare_framed_artwork(raw_img, frame_choice)
+                    
+                    # 3. Tabloyu odanın boyutuna göre ölçekle
+                    wall_w, wall_h = ai_room_bg.size
+                    target_h = int(wall_h * 0.45)
+                    aspect = framed_canvas.width / framed_canvas.height
+                    target_w = int(target_h * aspect)
+                    
+                    scaled_artwork = framed_canvas.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                    
+                    # 4. Tabloyu duvara monte et
+                    pos_x = (wall_w - target_w) // 2
+                    pos_y = (wall_h - target_h) // 2 - int(wall_h * 0.05)
+                    
+                    ai_room_bg.paste(scaled_artwork, (pos_x, pos_y), scaled_artwork)
+                    final_result = ai_room_bg.convert("RGB")
+                    
+                    st.success("✅ Yapay Zeka Mockup'ınız Başarıyla Hazırlandı!")
+                    st.image(final_result, caption=f"AI Üretimi: {style_preset}", use_container_width=True)
+                    
+                    buf = io.BytesIO()
+                    final_result.save(buf, format="JPEG", quality=95)
+                    st.download_button(
+                        label="📥 Yüksek Çözünürlüklü Yapay Zeka Mockup'ını İndir",
+                        data=buf.getvalue(),
+                        file_name="ai_mockup_result.jpg",
+                        mime="image/jpeg",
+                        use_container_width=True
+                    )
                 
             except Exception as e:
-                st.error(f"Görsel oluşturulurken bir hata oluştu: {str(e)}")
+                st.error(f"İşlem sırasında beklenmeyen bir hata oluştu: {str(e)}")
